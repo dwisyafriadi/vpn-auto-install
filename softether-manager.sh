@@ -96,7 +96,7 @@ WantedBy=multi-user.target
 EOF
 
   echo "net.ipv4.ip_forward = 1" >"$SYSCTL_FILE"
-  sysctl --system >/dev/null
+  sysctl -p "$SYSCTL_FILE" >/dev/null 2>&1 || sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
 
   systemctl daemon-reload
   systemctl enable --now vpnserver
@@ -233,7 +233,7 @@ uninstall_vpn() {
 
       rm -f "$SERVICE_FILE" "$SYSCTL_FILE"
       rm -rf "$INSTALL_DIR" /tmp/vpnserver /tmp/softether-vpnserver.tar.gz
-      sysctl --system >/dev/null
+      sysctl -w net.ipv4.ip_forward=0 >/dev/null 2>&1 || true
       systemctl daemon-reload
       echo "[OK] SoftEther VPN Server berhasil di-uninstall."
       ;;
