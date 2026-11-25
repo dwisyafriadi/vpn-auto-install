@@ -1,4 +1,4 @@
-cat > ~/vpn-auto-install/softether-manager.sh <<'EOF'
+cat > ~/vpn-auto-install/softether-manager.sh <<'SCRIPT_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -100,7 +100,7 @@ install_vpn() {
   chmod 700 "$INSTALL_DIR/vpnserver" "$INSTALL_DIR/vpncmd"
 
   echo "[3/5] Konfigurasi systemd service & IP forwarding..."
-  cat >"$SERVICE_FILE" <<'EOF'
+  cat >"$SERVICE_FILE" <<'SERVICE_EOF'
 [Unit]
 Description=SoftEther VPN Server
 After=network.target network-online.target
@@ -116,7 +116,7 @@ RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-EOF
+SERVICE_EOF
 
   echo "net.ipv4.ip_forward = 1" >"$SYSCTL_FILE"
   sysctl -p "$SYSCTL_FILE" >/dev/null 2>&1 || sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
@@ -294,7 +294,7 @@ uninstall_vpn() {
 }
 
 show_menu() {
-  cat <<'EOF'
+  cat <<'MENU_EOF'
 
 ========================================
       SOFTETHER VPN MANAGER (UBUNTU)
@@ -307,7 +307,7 @@ show_menu() {
 6. Uninstall VPN
 0. Exit
 ========================================
-EOF
+MENU_EOF
 }
 
 require_root
@@ -331,5 +331,5 @@ while true; do
       ;;
   esac
 done
-EOF
+SCRIPT_EOF
 chmod +x ~/vpn-auto-install/softether-manager.sh
