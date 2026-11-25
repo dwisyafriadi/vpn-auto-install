@@ -30,7 +30,7 @@ Repository: [github.com/dwisyafriadi/vpn-auto-install](https://github.com/dwisya
 Clone repository lalu jalankan script menu interaktif sebagai `root`:
 
 ```bash
-git clone [https://github.com/dwisyafriadi/vpn-auto-install.git](https://github.com/dwisyafriadi/vpn-auto-install.git)
+git clone https://github.com/dwisyafriadi/vpn-auto-install.git
 cd vpn-auto-install
 chmod +x softether-manager.sh
 sudo ./softether-manager.sh
