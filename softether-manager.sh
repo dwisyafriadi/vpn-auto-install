@@ -1,3 +1,4 @@
+cat > ~/vpn-auto-install/softether-manager.sh <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -25,12 +26,10 @@ is_port_used_by_other() {
 }
 
 detect_vpn_port() {
-  local p
-  for p in 443 5555 992 1194; do
-    if is_port_used_by_other "$p"; then
-      continue
-    fi
-    if "$VPNCMD" "localhost:$p" /SERVER /CMD About >/dev/null 2>&1; then
+  local p line
+  for p in 5555 443 992 1194; do
+    line="$(ss -tlnp 2>/dev/null | awk -v port=":$p" '$4 ~ (port "$")' || true)"
+    if grep -q "vpnserver" <<< "$line"; then
       echo "$p"
       return 0
     fi
@@ -127,35 +126,34 @@ EOF
 
   local vpn_port
   if ! vpn_port="$(wait_for_vpnserver)"; then
-    echo "[ERR] SoftEther VPN Server tidak merespons di port 443/5555/992/1194."
+    echo "[ERR] SoftEther VPN Server tidak aktif di port 5555/443/992/1194."
     return 1
   fi
 
-  if [ "$vpn_port" != "443" ]; then
+  if is_port_used_by_other 443; then
     echo "[INFO] Port 443 sedang digunakan layanan lain. Menggunakan port $vpn_port untuk SoftEther."
   fi
 
   echo "[4/5] Inisialisasi Server, Hub, SecureNAT, dan IPsec via port $vpn_port..."
-  "$VPNCMD" "localhost:$vpn_port" /SERVER /CMD ServerPasswordSet "$admin_pass" >/dev/null
+  "$VPNCMD" "localhost:$vpn_port" /SERVER /CMD ServerPasswordSet "$admin_pass" </dev/null >/dev/null
 
-  # Matikan listener 443 di SoftEther jika 443 dipakai layanan lain
   if is_port_used_by_other 443; then
-    "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /CMD ListenerDisable 443 >/dev/null 2>&1 || true
+    "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /CMD ListenerDisable 443 </dev/null >/dev/null 2>&1 || true
   fi
 
   local hub_list
-  hub_list="$("$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /CMD HubList)"
+  hub_list="$("$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /CMD HubList </dev/null)"
   if ! grep -qw "$hub_name" <<< "$hub_list"; then
-    "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /CMD HubCreate "$hub_name" /PASSWORD:"$admin_pass" >/dev/null
+    "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /CMD HubCreate "$hub_name" /PASSWORD:"$admin_pass" </dev/null >/dev/null
   fi
 
-  "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /HUB:"$hub_name" /CMD SecureNatEnable >/dev/null
+  "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /HUB:"$hub_name" /CMD SecureNatEnable </dev/null >/dev/null
   "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /HUB:"$hub_name" /CMD DhcpSet \
     /START:"$dhcp_start" /END:"$dhcp_end" /MASK:"255.255.255.0" \
     /EXPIRE:7200 /GW:"$dhcp_gw" /DNS:"1.1.1.1" /DNS2:"8.8.8.8" \
-    /DOMAIN:"vpn.local" /LOG:yes /PUSHROUTE:"none" >/dev/null
+    /DOMAIN:"vpn.local" /LOG:yes /PUSHROUTE:"none" </dev/null >/dev/null
   "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /CMD IPsecEnable \
-    /L2TP:yes /L2TPRAW:yes /ETHERIP:yes /PSK:"$psk" /DEFAULTHUB:"$hub_name" >/dev/null
+    /L2TP:yes /L2TPRAW:yes /ETHERIP:yes /PSK:"$psk" /DEFAULTHUB:"$hub_name" </dev/null >/dev/null
 
   echo "[5/5] Instalasi selesai."
   echo "      Port Aktif : $vpn_port (L2TP/IPsec: UDP 500 & 4500)"
@@ -199,7 +197,7 @@ create_user() {
 
   local vpn_port
   if ! vpn_port="$(detect_vpn_port)"; then
-    echo "[ERR] SoftEther VPN Server tidak aktif atau tidak merespons di port 443/5555/992/1194."
+    echo "[ERR] Service vpnserver tidak berjalan. Jalankan menu 3 (Start VPN) terlebih dahulu."
     return 1
   fi
 
@@ -229,9 +227,9 @@ create_user() {
   note="${note:-created-via-tool}"
 
   "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /HUB:"$hub_name" \
-    /CMD UserCreate "$user_name" /GROUP:none /REALNAME:"$real_name" /NOTE:"$note" >/dev/null
+    /CMD UserCreate "$user_name" /GROUP:none /REALNAME:"$real_name" /NOTE:"$note" </dev/null >/dev/null
   "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /HUB:"$hub_name" \
-    /CMD UserPasswordSet "$user_name" /PASSWORD:"$user_pass" >/dev/null
+    /CMD UserPasswordSet "$user_name" /PASSWORD:"$user_pass" </dev/null >/dev/null
 
   echo "[OK] User '$user_name' berhasil dibuat di Hub '$hub_name' (via port $vpn_port)."
 }
@@ -245,7 +243,7 @@ delete_user() {
 
   local vpn_port
   if ! vpn_port="$(detect_vpn_port)"; then
-    echo "[ERR] SoftEther VPN Server tidak aktif atau tidak merespons di port 443/5555/992/1194."
+    echo "[ERR] Service vpnserver tidak berjalan. Jalankan menu 3 (Start VPN) terlebih dahulu."
     return 1
   fi
 
@@ -265,7 +263,7 @@ delete_user() {
   case "${confirm:-N}" in
     y|Y|yes|YES)
       "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /HUB:"$hub_name" \
-        /CMD UserDelete "$user_name" >/dev/null
+        /CMD UserDelete "$user_name" </dev/null >/dev/null
       echo "[OK] User '$user_name' berhasil dihapus."
       ;;
     *)
@@ -333,3 +331,5 @@ while true; do
       ;;
   esac
 done
+EOF
+chmod +x ~/vpn-auto-install/softether-manager.sh
