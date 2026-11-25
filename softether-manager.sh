@@ -1,4 +1,3 @@
-cat > ~/vpn-auto-install/softether-manager.sh <<'SCRIPT_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -79,7 +78,8 @@ install_vpn() {
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential curl tar iproute2 libreadline-dev libssl-dev zlib1g-dev ncurses-dev
 
   echo "[2/5] Download & compile SoftEther VPN Server..."
-  systemctl stop vpnserver 2>/dev/null || true
+  systemctl stop vpnserver >/dev/null 2>&1 || true
+  pkill -9 -f "/usr/local/vpnserver/vpnserver" >/dev/null 2>&1 || true
   cd /tmp
   curl -fsSL "$TARBALL_URL" -o /tmp/softether-vpnserver.tar.gz
   rm -rf /tmp/vpnserver "$INSTALL_DIR"
@@ -165,7 +165,7 @@ stop_vpn() {
   if [ -f "$SERVICE_FILE" ]; then
     systemctl stop vpnserver || true
   elif [ -x "$INSTALL_DIR/vpnserver" ]; then
-    "$INSTALL_DIR/vpnserver" stop || true
+    "$INSTALL_DIR/vpnserver" stop >/dev/null 2>&1 || true
   else
     echo "[WARN] SoftEther VPN Server belum terinstal."
     return 1
@@ -231,7 +231,40 @@ create_user() {
   "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /HUB:"$hub_name" \
     /CMD UserPasswordSet "$user_name" /PASSWORD:"$user_pass" </dev/null >/dev/null
 
-  echo "[OK] User '$user_name' berhasil dibuat di Hub '$hub_name' (via port $vpn_port)."
+  local server_ip ipsec_info psk_val default_hub login_user
+  server_ip="$(curl -fsS --max-time 3 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')"
+  ipsec_info="$("$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /CMD IPsecGet </dev/null || true)"
+  psk_val="$(awk -F'|' '/IPsec Pre-Shared Key String/{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' <<< "$ipsec_info")"
+  default_hub="$(awk -F'|' '/Name of Default Virtual Hub/{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}' <<< "$ipsec_info")"
+
+  if [ "$hub_name" = "$default_hub" ] || [ -z "$default_hub" ]; then
+    login_user="$user_name"
+  else
+    login_user="${user_name}@${hub_name}"
+  fi
+
+  cat <<CONFIG_EOF
+
+[OK] User '$user_name' berhasil dibuat di Hub '$hub_name' (via port $vpn_port).
+
+========================================
+      KONFIGURASI KLIEN VPN (L2TP)
+========================================
+Server Address : $server_ip
+VPN Type       : L2TP/IPsec with pre-shared key
+Pre-Shared Key : ${psk_val:-<cek di IPsecGet>}
+Virtual Hub    : $hub_name
+Username       : $login_user
+Password       : $user_pass
+Port SoftEther : $vpn_port (khusus SoftEther Client)
+========================================
+Catatan Koneksi:
+- Windows : Settings -> Network & internet -> VPN -> Add VPN
+- Android : Settings -> Network -> VPN -> Add (L2TP/IPSec PSK)
+- iOS/Mac : Settings -> VPN -> Add VPN Configuration (L2TP)
+- Pastikan port UDP 500 & 4500 terbuka di Firewall VPS/Cloud.
+========================================
+CONFIG_EOF
 }
 
 delete_user() {
@@ -277,20 +310,52 @@ uninstall_vpn() {
   read -r -p "Yakin ingin menghapus total SoftEther VPN Server dan konfigurasinya? [y/N]: " confirm
   case "${confirm:-N}" in
     y|Y|yes|YES)
-      systemctl stop vpnserver 2>/dev/null || true
-      systemctl disable vpnserver 2>/dev/null || true
-      [ -x "$INSTALL_DIR/vpnserver" ] && "$INSTALL_DIR/vpnserver" stop 2>/dev/null || true
+      systemctl stop vpnserver >/dev/null 2>&1 || true
+      systemctl disable vpnserver >/dev/null 2>&1 || true
+      [ -x "$INSTALL_DIR/vpnserver" ] && "$INSTALL_DIR/vpnserver" stop >/dev/null 2>&1 || true
+      pkill -9 -f "/usr/local/vpnserver/vpnserver" >/dev/null 2>&1 || true
+      pkill -9 -f "/usr/local/vpnserver/vpncmd" >/dev/null 2>&1 || true
 
+      rm -rf "$INSTALL_DIR"
+      rm -rf /tmp/vpnserver /tmp/softether-vpnserver.tar.gz /var/lock/subsys/vpnserver
       rm -f "$SERVICE_FILE" "$SYSCTL_FILE"
-      rm -rf "$INSTALL_DIR" /tmp/vpnserver /tmp/softether-vpnserver.tar.gz
+      rm -f /etc/systemd/system/multi-user.target.wants/vpnserver.service
+      rm -f /usr/local/bin/vpnserver /usr/local/bin/vpncmd
+
       sysctl -w net.ipv4.ip_forward=0 >/dev/null 2>&1 || true
       systemctl daemon-reload
-      echo "[OK] SoftEther VPN Server berhasil di-uninstall."
+      systemctl reset-failed vpnserver >/dev/null 2>&1 || true
+
+      echo "[OK] SoftEther VPN Server, binary, dan seluruh konfigurasinya berhasil dihapus total."
       ;;
     *)
       echo "[INFO] Uninstall dibatalkan."
       ;;
   esac
+}
+
+list_users() {
+  echo "=== [7] List User VPN ==="
+  if [ ! -x "$VPNCMD" ]; then
+    echo "[ERR] SoftEther belum terinstal di $INSTALL_DIR."
+    return 1
+  fi
+
+  local vpn_port
+  if ! vpn_port="$(detect_vpn_port)"; then
+    echo "[ERR] Service vpnserver tidak berjalan. Jalankan menu 3 (Start VPN) terlebih dahulu."
+    return 1
+  fi
+
+  read -r -p "Nama Virtual Hub [DEFAULT]: " hub_name
+  hub_name="${hub_name:-DEFAULT}"
+
+  read -r -s -p "Password Admin VPN Server: " admin_pass
+  echo ""
+
+  echo ""
+  "$VPNCMD" "localhost:$vpn_port" /SERVER /PASSWORD:"$admin_pass" /HUB:"$hub_name" \
+    /CMD UserList </dev/null | grep -E 'User Name|Full Name|Num of Logins|Last Login|---'
 }
 
 show_menu() {
@@ -305,6 +370,7 @@ show_menu() {
 4. Create User
 5. Delete User
 6. Uninstall VPN
+7. List User
 0. Exit
 ========================================
 MENU_EOF
@@ -314,7 +380,7 @@ require_root
 
 while true; do
   show_menu
-  read -r -p "Pilih menu [0-6]: " choice
+  read -r -p "Pilih menu [0-7]: " choice
   case "${choice:-}" in
     1) install_vpn || echo "[ERR] Proses Install VPN gagal." ;;
     2) stop_vpn || true ;;
@@ -322,6 +388,7 @@ while true; do
     4) create_user || echo "[ERR] Gagal membuat user. Periksa password admin / nama Hub." ;;
     5) delete_user || echo "[ERR] Gagal menghapus user. Periksa password admin / username." ;;
     6) uninstall_vpn || true ;;
+    7) list_users || echo "[ERR] Gagal mengambil daftar user. Periksa password admin / nama Hub." ;;
     0)
       echo "Keluar."
       exit 0
@@ -331,5 +398,3 @@ while true; do
       ;;
   esac
 done
-SCRIPT_EOF
-chmod +x ~/vpn-auto-install/softether-manager.sh
