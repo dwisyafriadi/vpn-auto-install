@@ -99,18 +99,24 @@ EOF
 
 stop_vpn() {
   echo "=== [2] Stop SoftEther VPN Server ==="
-  if systemctl list-unit-files | grep -q "^vpnserver.service"; then
-    systemctl stop vpnserver
-    systemctl status vpnserver --no-pager --lines=3 || true
-  else
-    "$INSTALL_DIR/vpnserver" stop || true
+  if systemctl list-unit-files --no-legend | grep -q "^vpnserver.service"; then
+    systemctl stop vpnserver || true
   fi
-  echo "[OK] VPN Server dihentikan."
+  if [ -x "$INSTALL_DIR/vpnserver" ]; then
+    "$INSTALL_DIR/vpnserver" stop || true
+  else
+    echo "[WARN] Binary $INSTALL_DIR/vpnserver tidak ditemukan."
+  fi
+  echo "[OK] Proses stop VPN selesai."
 }
 
 start_vpn() {
   echo "=== [3] Start SoftEther VPN Server ==="
-  if systemctl list-unit-files | grep -q "^vpnserver.service"; then
+  if [ ! -x "$INSTALL_DIR/vpnserver" ]; then
+    echo "[ERR] Binary $INSTALL_DIR/vpnserver belum tersedia. Jalankan menu 1 (Install VPN) dulu."
+    return 1
+  fi
+  if systemctl list-unit-files --no-legend | grep -q "^vpnserver.service"; then
     systemctl start vpnserver
     systemctl status vpnserver --no-pager --lines=3
   else
